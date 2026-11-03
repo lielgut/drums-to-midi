@@ -24,7 +24,33 @@ Everything runs locally in your browser at `http://127.0.0.1:5055`.
 - **MIDI upload**: use an existing MIDI file's drum track (channel 10) instead of a YouTube link. Playback then uses only the built-in drum sounds.
 - **Downloads**: MP3, drum stem WAV, `drums.mid` (original timing), `drums_quantized.mid` (grid-aligned at a constant tempo, best for MuseScore or a DAW), and the sheet as PDF.
 
-## Requirements
+## Download (no installation)
+
+Ready-to-run apps are on the [Releases page](https://github.com/lielgut/drums-to-midi/releases/latest). Everything is included (Python, PyTorch, ffmpeg and the Demucs model), so there's nothing else to install. The download is about 350 MB, and the unzipped app takes about 800 MB.
+
+### macOS (Apple Silicon)
+
+1. Download `DrumsToMIDI-macOS-arm64.zip` and double-click it to unzip.
+2. Drag **Drums to MIDI.app** into your **Applications** folder.
+3. The app isn't signed by Apple, so the first launch is blocked. Open it once, click **Done**, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to "Drums to MIDI". You only do this once.
+
+### Windows (64-bit)
+
+1. Download `DrumsToMIDI-Windows-x64.zip`, right-click it and choose **Extract All**. Don't run it from inside the zip.
+2. Open the extracted `DrumsToMIDI` folder and double-click **DrumsToMIDI.exe**.
+3. If Windows shows "Windows protected your PC", click **More info → Run anyway**. The app isn't code-signed, so this appears the first time.
+
+### Using the app
+
+A small **Drums to MIDI** window opens and your browser opens the app. Keep the small window open while you use the app; click **Quit** in it to close it. The first launch takes a little longer.
+
+Results are saved in `~/Library/Application Support/DrumsToMIDI` on macOS and `%LOCALAPPDATA%\DrumsToMIDI` on Windows. If the app doesn't start, check `log.txt` in that folder.
+
+## Run from source
+
+Use this if you want to change the code, or if you're on a system without a prebuilt app.
+
+### Requirements
 
 | | macOS | Windows |
 |---|---|---|
@@ -38,9 +64,9 @@ Intel Macs aren't supported: the PyTorch version used here has no Intel Mac buil
 
 The page loads a few JavaScript libraries (three.js, VexFlow, jsPDF) from a CDN, so you need an internet connection while using it.
 
-## Installation
+### Installation
 
-### macOS
+#### macOS
 
 1. Open **Terminal**.
 2. Install Git (skip if `git --version` already works). This installs Apple's command line tools:
@@ -63,7 +89,7 @@ The page loads a few JavaScript libraries (three.js, VexFlow, jsPDF) from a CDN,
    ./run.sh
    ```
 
-### Windows
+#### Windows
 
 1. Open **PowerShell**.
 2. Install Git (skip if `git --version` already works):
@@ -90,7 +116,7 @@ The page loads a few JavaScript libraries (three.js, VexFlow, jsPDF) from a CDN,
 
 ## Usage
 
-Start the app with `./run.sh` (macOS) or `run.bat` (Windows). Your browser opens `http://127.0.0.1:5055`. Leave the terminal window open while you use the app, and press `Ctrl+C` in it to stop.
+Open the downloaded app, or start from source with `./run.sh` (macOS) or `run.bat` (Windows). Your browser opens `http://127.0.0.1:5055`. Keep the app's small window (or the terminal, when running from source) open while you use it. To stop, click **Quit** or press `Ctrl+C` in the terminal.
 
 ### From a YouTube link
 
@@ -189,8 +215,18 @@ static/
   index.html, style.css
   app.js                jobs, playback, drum roll, sheet, PDF, 2D drum view
   kit3d.js              3D view (three.js)
+launcher.py             desktop entry point (small control window + server)
+packaging/              PyInstaller spec and build script for the desktop apps
 run.sh / run.bat        start scripts for macOS / Windows
 ```
+
+### Building the desktop apps
+
+```bash
+uv run python packaging/build.py
+```
+
+This builds the app for the OS you run it on and zips it into `dist/`. PyInstaller can't cross-compile, so the Windows app has to be built on Windows. The [GitHub Actions workflow](.github/workflows/build.yml) builds both. Run it from the Actions tab, or push a tag like `v1.0.0` to publish a release.
 
 ## Credits
 

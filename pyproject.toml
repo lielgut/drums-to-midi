@@ -23,3 +23,8 @@ package = false
 
 [tool.uv.sources]
 adtof-pytorch = { git = "https://github.com/xavriley/ADTOF-pytorch" }
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.11",
+]

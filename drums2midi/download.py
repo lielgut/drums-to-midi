@@ -1,5 +1,7 @@
 """Step 1: download a YouTube video's audio as MP3 using yt-dlp."""
+import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -10,12 +12,16 @@ def _js_runtimes() -> dict:
     # YouTube needs a JS runtime to solve its player challenges. Prefer the deno bundled via
     # `yt-dlp[deno]` (works on macOS and Windows without a separate install), else any installed one.
     runtimes = {}
-    try:
-        import deno
+    bundled = Path(getattr(sys, "_MEIPASS", "")) / "bin" / ("deno.exe" if os.name == "nt" else "deno")
+    if getattr(sys, "frozen", False) and bundled.exists():  # packaged app
+        runtimes["deno"] = {"path": str(bundled)}
+    else:
+        try:
+            import deno
 
-        runtimes["deno"] = {"path": deno.find_deno_bin()}
-    except Exception:
-        pass
+            runtimes["deno"] = {"path": deno.find_deno_bin()}
+        except Exception:
+            pass
     for name in ("deno", "node", "bun"):
         path = shutil.which(name)
         if path and name not in runtimes:

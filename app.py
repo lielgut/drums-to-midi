@@ -1,6 +1,8 @@
 """Small web UI: paste a YouTube URL, get a drum MIDI + sheet."""
 import json
+import os
 import shutil
+import sys
 import threading
 import time
 import traceback
@@ -14,9 +16,10 @@ from drums2midi import pipeline
 from drums2midi.midi_import import import_midi
 from drums2midi.transcribe import render_outputs, track_beats, write_quantized_midi
 
-ROOT = Path(__file__).parent
-JOBS = ROOT / "jobs"
-JOBS.mkdir(exist_ok=True)
+# In the packaged app, bundled files live under sys._MEIPASS and results go to a per-user folder.
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+JOBS = Path(os.environ.get("DRUMS2MIDI_JOBS", ROOT / "jobs"))
+JOBS.mkdir(parents=True, exist_ok=True)
 ALLOWED_FILES = {"song.mp3", "drums.wav", "drums.mid", "drums_quantized.mid", "result.json", "clock.wav", "original.mid"}
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
@@ -160,8 +163,6 @@ def retune(job_id):
 
 
 if __name__ == "__main__":
-    import os
-    import sys
     import webbrowser
 
     # Windows consoles default to a legacy code page; song titles and log text may contain any Unicode.
