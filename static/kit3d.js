@@ -352,22 +352,15 @@ function frame() {
   const look = kitLook;
   const notes = result.notes;
 
-  // Hit intensity per instrument (same feel as the 2D view)
-  const flash = {};
-  const last = {};
-  for (let i = lowerBound(notes, now - 1); i < notes.length && notes[i].time <= now; i++) last[notes[i].pitch] = notes[i];
-  for (const p of LANE_ORDER) {
-    const n = last[p];
-    flash[p] = n ? Math.exp(-((now - n.time) / rate) / 0.15) * (0.5 + 0.5 * n.velocity / 127) : 0;
-  }
+  const flash = hitFlash(now, rate); // shared with the 2D view (app.js)
 
   // Falling gems
   const counts = {};
   for (const p of LANE_ORDER) counts[p] = 0;
-  for (let i = lowerBound(notes, now); i < notes.length && notes[i].time <= now + look; i++) {
+  for (let i = lowerBound(notes, now - gameTail(rate)); i < notes.length && notes[i].time <= now + look; i++) {
     const n = notes[i];
     const lane = pieces.lanes[n.pitch];
-    if (!lane || counts[n.pitch] >= MAX_NOTES) continue;
+    if (!lane || counts[n.pitch] >= MAX_NOTES || gameHides(i)) continue;
     const prog = 1 - (n.time - now) / look;
     tmpP.lerpVectors(lane.spawn, lane.target, prog);
     const sz = 0.75 + 0.5 * (n.velocity / 127);
@@ -450,6 +443,13 @@ document.querySelectorAll("[data-cam]").forEach((b) => b.addEventListener("click
   setView(b.dataset.cam);
 }));
 document.getElementById("autorotate").addEventListener("change", (e) => { if (controls) controls.autoRotate = e.target.checked; });
+
+// Screen position (px, relative to the 3D view) of a lane's landing target — used by game mode overlays.
+window.kit3dScreenPos = (pitch) => {
+  if (!renderer || !LANES[pitch]) return null;
+  const v = LANES[pitch].target.clone().project(camera);
+  return { x: ((v.x + 1) / 2) * wrap.clientWidth, y: ((1 - v.y) / 2) * wrap.clientHeight, visible: v.z < 1 };
+};
 
 window.kit3dShown = () => {
   try {

@@ -17,6 +17,7 @@ Everything runs locally in your browser at `http://127.0.0.1:5055`.
   - **Drum sheet**: standard drum notation quantized to 16th notes. The current bar is highlighted during playback; click a bar to jump there.
   - **Drum view**: a 2D kit with notes falling onto each drum, Guitar Hero style.
   - **3D view**: the same idea with a 3D kit you can rotate in any direction, with camera presets and auto-rotate.
+- **Game mode**: play the drums on your keyboard in full screen, using the Drum view or 3D view. See [Game mode](#game-mode).
 - **Playback**: the drum stem or the original song, layered with built-in drum sounds playing the MIDI (separate volumes).
 - **Slow motion**: 0.25× to 1.5× without changing pitch; the MIDI and every view follow.
 - **Sensitivity sliders** per instrument re-detect hits instantly, without re-processing.
@@ -123,6 +124,31 @@ Other percussion and non-drum instruments are ignored. Tempo and bar lines come 
 | **3D camera** | Drag to rotate, right-drag to pan, scroll to zoom, double-click to reset. Buttons jump to Drummer / Front / Top / Side |
 
 Previous results are listed under **Previous jobs** and stored in the `jobs/` folder (one subfolder per song).
+
+### Game mode
+
+Click **🎮 Game mode** next to the play button. The game opens full screen; press **Esc** to close it at any time.
+
+1. Pick the **view** (Drum view or 3D view), the **mode**, the backing audio and the speed, then press **Enter** or **Start**.
+2. After a 3-second countdown, hit the key shown above each drum as its note lands:
+
+   | Drum | Key |
+   |---|---|
+   | Hi-hat | D |
+   | Snare | F |
+   | Kick | Space |
+   | Toms | J |
+   | Cymbals | K |
+
+   Keys are matched by position, so they work with any keyboard layout.
+3. Each hit is judged on the spot: **Perfect** (within 50 ms), **Good** (within 100 ms), **Early / Late** with the offset in ms (within 180 ms), **Miss** when a note passes without a hit, and **✕ no note** for a key pressed when nothing was due.
+
+| Mode | How it plays |
+|---|---|
+| **Play along** | The song keeps going. Combos raise a score multiplier (up to ×4); misses and stray hits reset the combo |
+| **Wait for me** | Practice: the song pauses at each note (or chord) and shows which keys to press, then continues when you hit them |
+
+Your key presses make the drum sounds; the automatic MIDI drums are muted. For the backing track, choose the original song, the drum stem, or nothing. At the end you get a score, accuracy, max combo, a grade (S–D) and a breakdown of every judgment.
 
 ### Command line (no UI)
 

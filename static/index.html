@@ -65,6 +65,7 @@
 
         <div class="transport">
           <button id="play" class="btn round" aria-label="Play">▶</button>
+          <button id="game-btn" class="btn" type="button" title="Play the drums on your keyboard (full screen)">🎮 Game mode</button>
           <span id="time">0:00 / 0:00</span>
           <input id="seek" type="range" min="0" max="1000" value="0" />
           <label id="source-wrap">Audio
@@ -152,6 +153,20 @@
 
     </section>
   </main>
+
+  <div id="game" class="hidden">
+    <div id="game-stage"></div>
+    <div id="game-keys"></div>
+    <div id="game-fx"></div>
+    <div class="g-hud">
+      <div><div id="g-title"></div><div id="g-score">0</div><div id="g-acc"></div></div>
+      <div id="g-combo"></div>
+      <div class="g-esc">Esc to exit</div>
+    </div>
+    <div id="g-progress"><i></i></div>
+    <div id="g-center"></div>
+    <div id="g-panel" class="hidden"></div>
+  </div>
 
   <script src="/static/app.js"></script>
   <script type="module" src="/static/kit3d.js"></script>

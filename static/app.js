@@ -270,7 +270,7 @@ function resetScheduler() {
 }
 
 function scheduleNotes() {
-  if (!ctx || audio.paused) return;
+  if (!ctx || audio.paused || game.open) return; // in game mode the player makes the drum sounds
   const rate = audio.playbackRate || 1;
   const lookahead = 0.15 * rate; // in song time
   const now = audio.currentTime;
@@ -667,6 +667,31 @@ $("#sheet-wrap").addEventListener("click", (e) => {
   seekTo(slotToTime(box.measure * 16 - offset));
 });
 
+// ---------------------------------------------------------------- shared by the 2D and 3D kit views
+
+// Hit intensity per instrument (0..1), decaying ~150 ms of real time after the latest hit.
+// In game mode the drums react to the player's key presses instead of the notes.
+function hitFlash(now, rate) {
+  const flash = {};
+  if (game.open) {
+    const t = performance.now();
+    for (const p of LANE_ORDER) flash[p] = game.lastPress[p] ? Math.exp(-(t - game.lastPress[p]) / 150) : 0;
+    return flash;
+  }
+  const lastHit = {};
+  for (let i = lowerBound(result.notes, now - 1); i < result.notes.length && result.notes[i].time <= now; i++) {
+    lastHit[result.notes[i].pitch] = result.notes[i];
+  }
+  for (const p of LANE_ORDER) {
+    const n = lastHit[p];
+    flash[p] = n ? Math.exp(-((now - n.time) / rate) / 0.15) * (0.5 + 0.5 * n.velocity / 127) : 0;
+  }
+  return flash;
+}
+// In game mode, notes stay visible a little past their target until judged; judged notes disappear.
+function gameTail(rate) { return game.open ? GAME_WINDOWS.ok * rate : 0; }
+function gameHides(i) { return game.open && game.judged.has(i); }
+
 // ---------------------------------------------------------------- drum view (falling notes onto a kit)
 
 const kitCanvas = $("#kit");
@@ -706,17 +731,7 @@ function drawKit() {
   const rate = audio.playbackRate || 1;
   const P = (p) => ({ x: KIT_LANES[p].x * W, y: KIT_LANES[p].y * H });
 
-  // Hit intensity per instrument: decays ~150 ms of real time after the latest hit.
-  const flash = {}, lastHit = {};
-  const i0 = lowerBound(result.notes, now - 1);
-  for (let i = i0; i < result.notes.length && result.notes[i].time <= now; i++) {
-    const n = result.notes[i];
-    lastHit[n.pitch] = n;
-  }
-  for (const p of LANE_ORDER) {
-    const n = lastHit[p];
-    flash[p] = n ? Math.exp(-((now - n.time) / rate) / 0.15) * (0.5 + 0.5 * n.velocity / 127) : 0;
-  }
+  const flash = hitFlash(now, rate);
 
   // Stage floor + spotlight
   const bg = g.createRadialGradient(W / 2, H * 0.75, 10, W / 2, H * 0.75, W * 0.6);
@@ -777,8 +792,8 @@ function drawKit() {
 
   // Falling notes (drawn far → near so closer gems overlap farther ones)
   const visible = [];
-  for (let i = lowerBound(result.notes, now); i < result.notes.length && result.notes[i].time <= now + kitLook; i++) {
-    visible.push(result.notes[i]);
+  for (let i = lowerBound(result.notes, now - gameTail(rate)); i < result.notes.length && result.notes[i].time <= now + kitLook; i++) {
+    if (!gameHides(i)) visible.push(result.notes[i]);
   }
   for (let i = visible.length - 1; i >= 0; i--) {
     const n = visible[i];
@@ -803,7 +818,7 @@ function drawKit() {
   const slot = Math.floor(timeToSlot(now) + 0.25) + offset;
   g.textAlign = "left";
   g.fillStyle = "#8b93a7";
-  g.fillText(`Bar ${Math.floor(slot / 16) + 1} · Beat ${Math.floor((((slot % 16) + 16) % 16) / 4) + 1} · ${Math.round(result.tempo * rate)} BPM`, 12, 10);
+  if (!game.open) g.fillText(`Bar ${Math.floor(slot / 16) + 1} · Beat ${Math.floor((((slot % 16) + 16) % 16) / 4) + 1} · ${Math.round(result.tempo * rate)} BPM`, 12, 10);
 }
 
 function drawGem(g, x, y, rx, ry, color) {
@@ -941,6 +956,324 @@ function drawKitIllustration(g, W, H, s, flash) {
     }
   });
 }
+
+// ---------------------------------------------------------------- game mode
+
+// Physical keys (KeyboardEvent.code), so the mapping works on any keyboard layout.
+const GAME_KEYS = { 42: "KeyD", 38: "KeyF", 35: "Space", 47: "KeyJ", 49: "KeyK" };
+const KEY_LABELS = { KeyD: "D", KeyF: "F", Space: "Space", KeyJ: "J", KeyK: "K" };
+const CODE_TO_PITCH = Object.fromEntries(Object.entries(GAME_KEYS).map(([p, c]) => [c, Number(p)]));
+// Timing windows in real seconds (scaled by playback speed when compared with song time).
+const GAME_WINDOWS = { perfect: 0.05, good: 0.1, ok: 0.18 };
+const POINTS = { perfect: 300, good: 200, early: 100, late: 100 };
+
+const game = {
+  open: false, state: "idle", // idle | countdown | playing | done
+  view: "kit", mode: "play", judged: new Map(), lastPress: {},
+  score: 0, combo: 0, maxCombo: 0, counts: {}, ptr: 0, waiting: false, countdownEnd: 0,
+  prevView: null, prevSource: null, canvasHome: null,
+};
+const gEl = $("#game");
+
+$("#game-btn").addEventListener("click", openGame);
+
+function openGame() {
+  if (!result || !result.notes.length) { alert("No drum notes to play."); return; }
+  audio.pause();
+  game.open = true;
+  game.prevView = activeView;
+  game.prevSource = $("#source").value;
+  game.view = activeView === "kit3d" ? "kit3d" : "kit";
+  gEl.classList.remove("hidden");
+  gEl.requestFullscreen?.().catch(() => {}); // the overlay covers the window even if fullscreen is refused
+  mountView();
+  showStartPanel();
+  requestAnimationFrame(gameLoop);
+}
+
+function closeGame() {
+  if (!game.open) return;
+  game.open = false;
+  game.state = "idle";
+  audio.pause();
+  unmountView();
+  gEl.classList.add("hidden");
+  $("#g-panel").classList.add("hidden");
+  $("#g-center").textContent = "";
+  $("#game-keys").innerHTML = "";
+  $("#game-fx").innerHTML = "";
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (!isMidiJob() && $("#source").value !== game.prevSource) { $("#source").value = game.prevSource; setAudioSource(); }
+  showView(game.prevView);
+}
+
+// Move the chosen view's canvas into the full-screen stage (and back on exit).
+function mountView() {
+  unmountView();
+  const el = game.view === "kit3d" ? $("#kit3d-wrap") : $("#kit");
+  game.canvasHome = { el, parent: el.parentNode, next: el.nextSibling };
+  $("#game-stage").append(el);
+  activeView = game.view;
+  if (game.view === "kit3d") window.kit3dShown?.();
+  buildKeycaps();
+}
+function unmountView() {
+  const h = game.canvasHome;
+  if (!h) return;
+  h.parent.insertBefore(h.el, h.next);
+  game.canvasHome = null;
+}
+
+function lanePos(p) {
+  if (game.view === "kit3d") return window.kit3dScreenPos?.(p);
+  const c = $("#kit");
+  return { x: KIT_LANES[p].x * c.clientWidth, y: KIT_LANES[p].y * c.clientHeight, visible: true };
+}
+
+function buildKeycaps() {
+  const box = $("#game-keys");
+  box.innerHTML = "";
+  for (const p of LANE_ORDER) {
+    const k = document.createElement("div");
+    k.className = "keycap";
+    k.dataset.pitch = p;
+    k.style.borderColor = COLORS[p];
+    k.style.color = COLORS[p];
+    k.textContent = KEY_LABELS[GAME_KEYS[p]];
+    box.append(k);
+  }
+}
+
+function placeKeycaps() {
+  const t = performance.now();
+  for (const k of $("#game-keys").children) {
+    const p = Number(k.dataset.pitch);
+    const pos = lanePos(p);
+    if (!pos || !pos.visible) { k.style.display = "none"; continue; }
+    k.style.display = "";
+    const pressed = game.lastPress[p] && t - game.lastPress[p] < 90;
+    k.style.transform = `translate(${pos.x}px, ${pos.y - 46}px) translate(-50%, -50%) scale(${pressed ? 0.88 : 1})`;
+    k.classList.toggle("down", pressed);
+  }
+}
+
+function popup(p, text, kind) {
+  const pos = lanePos(p);
+  if (!pos) return;
+  const d = document.createElement("div");
+  d.className = `fb ${kind}`;
+  d.textContent = text;
+  d.style.left = `${pos.x}px`;
+  d.style.top = `${pos.y - 80}px`;
+  $("#game-fx").append(d);
+  setTimeout(() => d.remove(), 750);
+}
+
+// ------------------------------------------------ panels
+
+function showStartPanel() {
+  game.state = "idle";
+  const speeds = [...$("#speed").options].map((o) => `<option value="${o.value}" ${o.selected ? "selected" : ""}>${o.textContent}</option>`).join("");
+  const keys = LANE_ORDER.slice().reverse().map((p) =>
+    `<div class="g-key"><span class="keycap static" style="border-color:${COLORS[p]};color:${COLORS[p]}">${KEY_LABELS[GAME_KEYS[p]]}</span>${result.instruments.find((i) => i.pitch === p).name}</div>`).join("");
+  panel(`
+    <h2>🎮 Game mode</h2>
+    <p class="sub">${escapeHtml(result.title || "")}</p>
+    <div class="g-row"><span>View</span>
+      <div class="seg" data-opt="view"><button data-v="kit">Drum view</button><button data-v="kit3d">3D view</button></div></div>
+    <div class="g-row"><span>Mode</span>
+      <div class="seg" data-opt="mode"><button data-v="play">Play along</button><button data-v="wait">Wait for me</button></div></div>
+    <p class="hint g-mode-hint"></p>
+    ${isMidiJob() ? "" : `<div class="g-row"><span>Backing</span><select id="g-source">
+      <option value="song">Original song</option><option value="drums">Drum stem (doubles your drums)</option><option value="none">None (only your drums)</option></select></div>`}
+    <div class="g-row"><span>Speed</span><select id="g-speed">${speeds}</select></div>
+    <div class="g-keys">${keys}</div>
+    <div class="g-actions"><button id="g-start" class="btn">Start (Enter)</button><button id="g-exit" class="btn ghost">Exit (Esc)</button></div>`);
+  const sync = () => {
+    $("#g-panel").querySelectorAll(".seg").forEach((seg) =>
+      seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === game[seg.dataset.opt])));
+    $(".g-mode-hint").textContent = game.mode === "play"
+      ? "The song keeps going: hit each note on time. Misses and off-time hits are scored."
+      : "Practice: the song pauses at every note until you hit the right key.";
+  };
+  $("#g-panel").querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+    const opt = b.closest(".seg").dataset.opt;
+    game[opt] = b.dataset.v;
+    if (opt === "view") mountView();
+    sync();
+  }));
+  sync();
+  if ($("#g-source")) $("#g-source").value = isMidiJob() ? "none" : "song";
+  $("#g-start").addEventListener("click", startGame);
+  $("#g-exit").addEventListener("click", closeGame);
+}
+
+function showResults() {
+  game.state = "done";
+  audio.pause();
+  const c = game.counts, total = result.notes.length;
+  const acc = accuracy();
+  const grade = acc >= 95 ? "S" : acc >= 90 ? "A" : acc >= 80 ? "B" : acc >= 70 ? "C" : "D";
+  panel(`
+    <h2>${game.mode === "wait" ? "Practice complete" : "Song complete"}</h2>
+    <div class="g-grade g-${grade}">${grade}</div>
+    <div class="g-stats">
+      <div><b>${game.score.toLocaleString()}</b><span>Score</span></div>
+      <div><b>${acc.toFixed(1)}%</b><span>Accuracy</span></div>
+      <div><b>${game.maxCombo}</b><span>Max combo</span></div>
+    </div>
+    <div class="g-counts">
+      <span class="perfect">Perfect ${c.perfect || 0}</span><span class="good">Good ${c.good || 0}</span>
+      <span class="early">Early ${c.early || 0}</span><span class="late">Late ${c.late || 0}</span>
+      <span class="miss">Miss ${c.miss || 0}</span><span class="extra">No note ${c.extra || 0}</span>
+      <span>of ${total} notes</span>
+    </div>
+    <div class="g-actions"><button id="g-again" class="btn">Play again (Enter)</button><button id="g-settings" class="btn ghost">Settings</button><button id="g-exit" class="btn ghost">Exit (Esc)</button></div>`);
+  $("#g-again").addEventListener("click", startGame);
+  $("#g-settings").addEventListener("click", showStartPanel);
+  $("#g-exit").addEventListener("click", closeGame);
+}
+
+function panel(html) {
+  const p = $("#g-panel");
+  p.innerHTML = html;
+  p.classList.remove("hidden");
+}
+function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+
+// ------------------------------------------------ run
+
+function startGame() {
+  if ($("#g-speed")) { $("#speed").value = $("#g-speed").value; applySpeed(); }
+  const src = $("#g-source")?.value ?? "none";
+  if (!isMidiJob() && $("#source").value !== src) { $("#source").value = src; setAudioSource(); }
+  ensureAudioCtx();
+  ctx.resume();
+  document.activeElement?.blur(); // so Space doesn't click a focused button
+  $("#g-panel").classList.add("hidden");
+  Object.assign(game, { judged: new Map(), score: 0, combo: 0, maxCombo: 0, counts: {}, ptr: 0, waiting: false });
+  $("#game-fx").innerHTML = "";
+  const first = result.notes[0].time;
+  const start = Math.max(0, first - kitLook * (audio.playbackRate || 1) - 1);
+  const go = () => {
+    seekTo(start);
+    game.state = "countdown";
+    game.countdownEnd = performance.now() + 3000;
+  };
+  if (audio.readyState >= 1) go(); else audio.addEventListener("loadedmetadata", go, { once: true });
+}
+
+function judge(pitch) {
+  const now = audio.currentTime, rate = audio.playbackRate || 1;
+  const win = GAME_WINDOWS.ok * rate;
+  let best = -1, bestDt = Infinity;
+  for (let i = lowerBound(result.notes, now - win); i < result.notes.length && result.notes[i].time <= now + win; i++) {
+    const n = result.notes[i];
+    if (n.pitch !== pitch || game.judged.has(i)) continue;
+    const dt = Math.abs(n.time - now);
+    if (dt < bestDt) { best = i; bestDt = dt; }
+  }
+  if (best < 0) {
+    // In practice mode, pressing while the song waits on a different drum is just a nudge.
+    popup(pitch, game.waiting ? "✕ wrong drum" : "✕ no note", "extra");
+    if (!game.waiting) { game.counts.extra = (game.counts.extra || 0) + 1; game.combo = 0; }
+    return;
+  }
+  const dtReal = (now - result.notes[best].time) / rate; // negative = early
+  const a = Math.abs(dtReal);
+  const kind = a <= GAME_WINDOWS.perfect ? "perfect" : a <= GAME_WINDOWS.good ? "good" : dtReal < 0 ? "early" : "late";
+  game.judged.set(best, kind);
+  game.counts[kind] = (game.counts[kind] || 0) + 1;
+  game.combo++;
+  game.maxCombo = Math.max(game.maxCombo, game.combo);
+  game.score += POINTS[kind] * multiplier();
+  const ms = Math.round(Math.abs(dtReal) * 1000);
+  popup(pitch, { perfect: "Perfect!", good: "Good", early: `Early ${ms}ms`, late: `Late ${ms}ms` }[kind], kind);
+}
+
+function multiplier() { return 1 + Math.min(3, Math.floor(game.combo / 10)); }
+function accuracy() {
+  const c = game.counts;
+  const judged = (c.perfect || 0) + (c.good || 0) + (c.early || 0) + (c.late || 0) + (c.miss || 0);
+  if (!judged) return 100;
+  return (100 * ((c.perfect || 0) + 0.7 * (c.good || 0) + 0.4 * ((c.early || 0) + (c.late || 0)))) / judged;
+}
+
+function gameLoop() {
+  if (!game.open) return;
+  const now = audio.currentTime, rate = audio.playbackRate || 1;
+  const notes = result.notes;
+
+  if (game.state === "countdown") {
+    const left = Math.ceil((game.countdownEnd - performance.now()) / 1000);
+    $("#g-center").textContent = left > 0 ? String(left) : "Go!";
+    if (left <= 0) { game.state = "playing"; audio.play(); setTimeout(() => game.state === "playing" && ($("#g-center").textContent = ""), 400); }
+  }
+
+  if (game.state === "playing") {
+    // Skip past judged notes; resolve the ones that are due.
+    while (game.ptr < notes.length && game.judged.has(game.ptr)) game.ptr++;
+    if (game.mode === "play") {
+      for (let i = game.ptr; i < notes.length && notes[i].time < now - GAME_WINDOWS.ok * rate; i++) {
+        if (game.judged.has(i)) continue;
+        game.judged.set(i, "miss");
+        game.counts.miss = (game.counts.miss || 0) + 1;
+        game.combo = 0;
+        popup(notes[i].pitch, "Miss", "miss");
+      }
+    } else if (game.ptr < notes.length) {
+      // Practice: hold at the next note (and any chord partners) until they're all hit.
+      const due = notes[game.ptr].time;
+      if (!game.waiting && now >= due) { game.waiting = true; game.waitDue = due; audio.pause(); audio.currentTime = due; }
+    }
+    if (game.mode === "wait" && game.waiting) {
+      // Everything due at the held moment (chords count as one stop).
+      const pending = {};
+      for (let i = game.ptr; i < notes.length && notes[i].time <= game.waitDue + 0.03; i++) {
+        if (!game.judged.has(i)) pending[notes[i].pitch] = (pending[notes[i].pitch] || 0) + 1;
+      }
+      const keys = Object.entries(pending);
+      if (!keys.length) { game.waiting = false; audio.play(); $("#g-center").textContent = ""; }
+      else $("#g-center").innerHTML = `<span class="g-wait">Hit ${keys.map(([p, n]) =>
+        `<span class="keycap static" style="border-color:${COLORS[p]};color:${COLORS[p]}">${KEY_LABELS[GAME_KEYS[p]]}</span>${n > 1 ? `×${n}` : ""}`).join(" + ")}</span>`;
+    }
+    const last = notes[notes.length - 1].time;
+    if ((game.ptr >= notes.length && now > last + 1) || audio.ended) showResults();
+  }
+
+  // HUD
+  const c = game.combo;
+  $("#g-score").textContent = game.score.toLocaleString();
+  $("#g-acc").textContent = `${accuracy().toFixed(1)}% · ×${multiplier()}`;
+  $("#g-combo").textContent = c >= 5 ? `${c} combo` : "";
+  $("#g-combo").classList.toggle("hot", c >= 30);
+  $("#g-title").textContent = result.title || "";
+  const end = notes[notes.length - 1].time;
+  $("#g-progress i").style.width = `${Math.min(100, (100 * now) / Math.max(1, end))}%`;
+
+  if (game.view === "kit") drawKit(); // the 3D view renders itself
+  placeKeycaps();
+  requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (!game.open) return;
+  if (e.key === "Escape") { e.preventDefault(); closeGame(); return; }
+  if (e.key === "Enter" && game.state !== "playing" && game.state !== "countdown") { e.preventDefault(); startGame(); return; }
+  const pitch = CODE_TO_PITCH[e.code];
+  if (pitch === undefined) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  ensureAudioCtx();
+  playDrum(pitch, ctx.currentTime, 0.9); // the player is the drummer
+  game.lastPress[pitch] = performance.now();
+  if (game.state === "playing") judge(pitch);
+}, true);
+
+// Leaving full screen (the browser handles Esc there) also closes the game.
+document.addEventListener("fullscreenchange", () => {
+  if (game.open && !document.fullscreenElement) closeGame();
+});
 
 // ---------------------------------------------------------------- roll / sheet tabs
 
