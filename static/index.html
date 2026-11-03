@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Drums → MIDI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/vexflow@4.2.5/build/cjs/vexflow.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js"></script>
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>🥁 Drums → MIDI</h1>
+    <p class="sub">YouTube → MP3 (yt-dlp) → drum stem (Demucs) → drum MIDI and sheet (ADTOF) — or upload a MIDI file</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <form id="form">
+        <input id="url" type="url" placeholder="Paste a YouTube URL, e.g. https://www.youtube.com/watch?v=…" required />
+        <button id="go" type="submit">Convert</button>
+        <span class="or">or</span>
+        <label class="btn ghost" for="midi-file" title="Use an existing MIDI file's drum track (channel 10). Playback uses the built-in drum sounds only.">Upload MIDI</label>
+        <input id="midi-file" type="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden />
+      </form>
+      <p class="hint">Tip: you can also drop a .mid file anywhere on this card.</p>
+      <details id="history-wrap">
+        <summary>Previous jobs</summary>
+        <ul id="history"></ul>
+      </details>
+    </section>
+
+    <section class="card hidden" id="progress">
+      <div class="steps">
+        <div class="step" data-step="download"><span class="dot"></span><b>1. Download MP3</b><div class="bar"><i></i></div></div>
+        <div class="step" data-step="separate"><span class="dot"></span><b>2. Isolate drums</b><div class="bar"><i></i></div></div>
+        <div class="step" data-step="transcribe"><span class="dot"></span><b>3. Transcribe to MIDI</b><div class="bar"><i></i></div></div>
+      </div>
+      <p id="message"></p>
+      <details><summary>Log</summary><pre id="log"></pre></details>
+    </section>
+
+    <section class="hidden" id="results">
+      <div class="card">
+        <div class="result-head">
+          <div>
+            <h2 id="title"></h2>
+            <p class="sub" id="stats"></p>
+          </div>
+          <div class="downloads">
+            <a id="dl-mp3" class="btn ghost">Song MP3</a>
+            <a id="dl-wav" class="btn ghost">Drum stem WAV</a>
+            <a id="dl-mid" class="btn">Drums MIDI</a>
+            <a id="dl-qmid" class="btn" title="Snapped to a 16th-note grid at constant tempo — best for MuseScore / notation">Quantized MIDI</a>
+            <button id="dl-pdf" class="btn" type="button" title="Download the drum sheet as a printable PDF">Sheet PDF</button>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button id="play" class="btn round" aria-label="Play">▶</button>
+          <span id="time">0:00 / 0:00</span>
+          <input id="seek" type="range" min="0" max="1000" value="0" />
+          <label id="source-wrap">Audio
+            <select id="source">
+              <option value="drums">Drum stem</option>
+              <option value="song">Original song</option>
+              <option value="none">None (MIDI only)</option>
+            </select>
+          </label>
+          <label id="audio-vol-wrap">Audio vol <input id="audio-vol" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
+          <label>MIDI vol <input id="midi-vol" type="range" min="0" max="1" step="0.01" value="0.6" /></label>
+          <label title="Slow motion: audio keeps its pitch, MIDI follows the same speed">Speed
+            <select id="speed">
+              <option value="0.25">0.25×</option>
+              <option value="0.5">0.5×</option>
+              <option value="0.6">0.6×</option>
+              <option value="0.75">0.75×</option>
+              <option value="0.9">0.9×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+            </select>
+            <span id="speed-bpm"></span>
+          </label>
+        </div>
+        <audio id="audio" preload="auto"></audio>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div class="tabs" role="tablist">
+            <button class="tab" role="tab" type="button" data-view="roll" aria-controls="view-roll">Drum roll</button>
+            <button class="tab" role="tab" type="button" data-view="sheet" aria-controls="view-sheet">Drum sheet</button>
+            <button class="tab" role="tab" type="button" data-view="kit" aria-controls="view-kit">Drum view</button>
+            <button class="tab" role="tab" type="button" data-view="kit3d" aria-controls="view-kit3d">3D view</button>
+          </div>
+          <label data-for="roll">Zoom <input id="zoom" type="range" min="2" max="30" step="1" value="8" /> <span id="zoom-label">8s</span></label>
+          <span class="cam-buttons" data-for="kit3d">
+            <button type="button" class="btn ghost sm" data-cam="drummer">Drummer</button>
+            <button type="button" class="btn ghost sm" data-cam="front">Front</button>
+            <button type="button" class="btn ghost sm" data-cam="top">Top</button>
+            <button type="button" class="btn ghost sm" data-cam="side">Side</button>
+            <label><input type="checkbox" id="autorotate" /> Auto-rotate</label>
+          </span>
+          <label data-for="kit kit3d">Look-ahead <input id="look" type="range" min="1" max="5" step="0.5" value="2.5" /> <span id="look-label">2.5s</span></label>
+          <label data-for="sheet">Bar starts on beat
+            <select id="bar-offset">
+              <option value="0">1 (as detected)</option>
+              <option value="1">shift +1 beat</option>
+              <option value="2">shift +2 beats</option>
+              <option value="3">shift +3 beats</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="view" id="view-roll" role="tabpanel" data-view="roll">
+          <canvas id="roll"></canvas>
+          <p class="hint">Click to seek · scroll/drag horizontally to browse</p>
+        </div>
+
+        <div class="view" id="view-kit" role="tabpanel" data-view="kit">
+          <canvas id="kit"></canvas>
+          <p class="hint">Notes fall toward the instrument that plays them — press ▶ (try 0.5× speed to learn a groove)</p>
+        </div>
+
+        <div class="view" id="view-kit3d" role="tabpanel" data-view="kit3d">
+          <div id="kit3d-wrap"><div id="kit3d-hud"></div></div>
+          <p class="hint">Drag to rotate in any direction · right-drag or two-finger drag to pan · scroll to zoom · double-click to reset</p>
+        </div>
+
+        <div class="view" id="view-sheet" role="tabpanel" data-view="sheet">
+          <div class="legend" id="legend"></div>
+          <div id="sheet-wrap"><div id="sheet-hl"></div><div id="sheet"></div></div>
+          <p class="hint">Auto-quantized to 16th notes along tracked beats. Click a bar to jump there.</p>
+        </div>
+      </div>
+
+      <div class="card" id="sens-card">
+        <div class="card-head">
+          <h3>Sensitivity</h3>
+          <span class="hint">Lower = more hits detected. Re-picks notes instantly, no re-processing.</span>
+        </div>
+        <div id="thresholds"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+  <script type="module" src="/static/kit3d.js"></script>
+</body>
+</html>

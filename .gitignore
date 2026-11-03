@@ -1,0 +1,8 @@
+.venv/
+jobs/
+out/
+__pycache__/
+*.pyc
+.claude/
+.DS_Store
+.env

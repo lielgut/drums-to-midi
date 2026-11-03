@@ -1,0 +1,25 @@
+[project]
+name = "drums-to-midi"
+version = "0.1.0"
+description = "Turn a song's drum part (YouTube link or MIDI file) into MIDI, a drum sheet and a play-along view"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "yt-dlp[default,deno]>=2025.10.0",
+    "demucs==4.0.1",
+    "torch==2.8.0",
+    "torchaudio==2.8.0",
+    "soundfile>=0.12",
+    "librosa>=0.10.2",
+    "numpy<2.3",
+    "scipy>=1.11",
+    "pretty_midi>=0.2.10",
+    "flask>=3.0",
+    "adtof-pytorch",
+    "imageio-ffmpeg>=0.5",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+adtof-pytorch = { git = "https://github.com/xavriley/ADTOF-pytorch" }
